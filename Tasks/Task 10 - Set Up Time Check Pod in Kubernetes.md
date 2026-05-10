@@ -61,76 +61,122 @@ The `kubectl logs` command retrieves logs from a container.
 
 This helps diagnose issues related to container startup or command execution.
 
-### Step 4: Edit the Pod Configuration
+### Step 4: Export Existing Pod YAML
 
 ```bash
-kubectl edit pod webserver
+kubectl get pod webserver -o yaml > webserver.yaml
 ```
 #### Explanation:
-The `kubectl edit` command opens the live resource configuration in a text editor. It allows direct modification of the Pod definition.
+The `kubectl get pod` command retrieves the Pod definition.
+* `-o yaml` outputs the configuration in YAML format
+* `>` redirects the output into `webserver.yaml`
 
-During troubleshooting, it was identified that the sidecar container was exiting immediately because no valid long-running process was defined.
+This allows editing the configuration externally.
 
-To fix the issue, update the sidecar container configuration as shown below:
+### Step 5: Edit Pod Manifest Externally using heredoc
 
 ```yaml
-- name: sidecar-container
-  image: ubuntu:latest
-  command: ["/bin/bash", "-c", "while true; do sleep 3600; done"]
+cat > webserver.yaml << 'EOF'
+apiVersion: v1
+kind: Pod
+metadata:
+  name: webserver
+spec:
+  containers:
+  - name: nginx-container
+    image: nginx:latest
+    ports:
+    - containerPort: 80
+
+  - name: sidecar-container
+    image: ubuntu:latest
+    command:
+    - /bin/bash
+    - -c
+    - while true; do sleep 3600; done
+EOF
 ```
 
-This command keeps the sidecar container running continuously.
+#### Explanation:
+The `cat > webserver.yaml << 'EOF'` command creates or overwrites the YAML manifest file.
+* `>` redirects content into the file
+* `<< 'EOF'` starts a heredoc block
 
-### Step 5: Verify Pod Status After Fix
+The issue was caused because the sidecar container did not have a long-running process and exited immediately. The added command keeps the sidecar container running continuously.
+
+### Step 6: Delete Existing Faulty Pod
+
+```bash
+kubectl delete pod webserver
+```
+#### Explanation:
+The `kubectl delete pod` command removes the existing faulty Pod from the cluster. This is required because most Pod specifications cannot be modified directly after creation.
+
+### Step 7: Recreate Fixed Pod
+
+```bash
+kubectl apply -f webserver.yaml
+```
+#### Explanation:
+The `kubectl apply` command creates the Pod using the corrected YAML file.
+* `-f` specifies the manifest file
+
+The new Pod will start with the corrected sidecar configuration.
+
+### Step 8: Verify Pod Status
 
 ```bash
 kubectl get pods
 ```
 #### Explanation:
-Re-run the `kubectl get pods` command to confirm the Pod is now in the `Running` state.
+This command verifies whether the Pod is now in the `Running` state. Both containers should be healthy and operational.
 
-A healthy Pod should display:
-* STATUS as `Running`
-* READY containers count correctly
-
-### Step 6: Verify Application Accessibility
+### Step 9: Verify Application Accessibility
 
 ```bash
-kubectl exec -it webserver -c httpd-container -- curl localhost
+kubectl exec -it webserver -c nginx-container -- curl localhost
 ```
 #### Explanation:
-The `kubectl exec` command runs commands inside a container.
-* `-it` enables interactive terminal mode
-* `-c httpd-container` specifies the target container
-* `curl localhost` checks whether the HTTPD application is responding internally
-
-This confirms the application is accessible after troubleshooting.
+The `kubectl exec` command executes commands inside a container.
+* `-it` enables interactive mode
+* `-c nginx-container` specifies the nginx container
+* `curl localhost` checks whether the nginx application is accessible internally
 
 ---
 
 ## YAML/Config
 
-### Updated Sidecar Container Configuration
-
 ```yaml
-- name: sidecar-container
-  image: ubuntu:latest
-  command: ["/bin/bash", "-c", "while true; do sleep 3600; done"]
+apiVersion: v1
+kind: Pod
+metadata:
+  name: webserver
+spec:
+  containers:
+  - name: nginx-container
+    image: nginx:latest
+    ports:
+    - containerPort: 80
+
+  - name: sidecar-container
+    image: ubuntu:latest
+    command:
+    - /bin/bash
+    - -c
+    - while true; do sleep 3600; done
 ```
 
 ---
 
 ## ⚠️ Challenges Faced / Troubleshooting
-
 * Sidecar container exited immediately after startup
-* Pod entered error state because one container was continuously failing
+* Pod remained in error state because one container was failing
 * Initially checked only Pod status without inspecting logs
-* Multi-container Pods require troubleshooting each container individually
+* Existing Pod needed to be deleted before applying corrected configuration
 
 ## 🧠 Key Learnings
-
-* A Pod remains unhealthy if any critical container fails
-* `kubectl describe` and `kubectl logs` are essential troubleshooting tools
+* Multi-container Pods require troubleshooting each container separately
 * Sidecar containers must run a valid long-running process
-* `kubectl edit` allows quick live configuration fixes
-* Multi-container Pods require container-specific debugging
+* `kubectl describe` and logs are essential troubleshooting tools
+* Pod manifests can be edited externally using YAML files
+* Faulty Pods often need to be recreated after configuration changes
